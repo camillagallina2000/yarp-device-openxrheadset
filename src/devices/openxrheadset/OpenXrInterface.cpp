@@ -1641,6 +1641,22 @@ void OpenXrInterface::updateFbBodyTracking()
 
 void OpenXrInterface::printInteractionProfiles()
 {
+    bool anyChanged = false;
+
+    for (auto& topLevel : m_pimpl->top_level_paths)
+    {
+        if (topLevel.currentInteractionProfile != topLevel.lastPrintedInteractionProfile)
+        {
+            anyChanged = true;
+            break;
+        }
+    }
+
+    if (!anyChanged)
+    {
+        return;
+    }
+
     for (auto& topLevel : m_pimpl->top_level_paths)
     {
         if (topLevel.currentInteractionProfile == TOP_LEVEL_NOT_SUPPORTED_TAG)
@@ -1651,6 +1667,7 @@ void OpenXrInterface::printInteractionProfiles()
         {
             yCInfo(OPENXRHEADSET) << "Interaction profile of" << topLevel.stringPath << ":" << topLevel.currentInteractionProfile;
         }
+        topLevel.lastPrintedInteractionProfile = topLevel.currentInteractionProfile;
     }
 
     if (m_pimpl->top_level_paths[0].currentInteractionProfile != m_pimpl->top_level_paths[1].currentInteractionProfile)

@@ -153,6 +153,7 @@ struct TopLevelPath
     XrPath xrPath;
 
     std::string currentInteractionProfile{NO_INTERACTION_PROFILE_TAG};
+    std::string lastPrintedInteractionProfile{""}; //Empty means never printed
 
     std::unordered_map<std::string, InputActions> interactionProfileActions;
 

@@ -70,6 +70,16 @@ OpenXrInterface::NamedPoseVelocity FilteredPosePublisher::filterJumps(const Open
     {
         m_lastValidDataTime = yarp::os::Time::now();
         m_convergingToJump = false;
+        if (m_positionJumpWarningPrinted)
+        {
+            yCInfo(OPENXRHEADSET) << label() << "position jump recovered.";
+            m_positionJumpWarningPrinted = false;
+        }
+        if (m_rotationJumpWarningPrinted)
+        {
+            yCInfo(OPENXRHEADSET) << label() << "rotation jump recovered.";
+            m_rotationJumpWarningPrinted = false;
+        }
     }
     else
     {
@@ -82,22 +92,40 @@ OpenXrInterface::NamedPoseVelocity FilteredPosePublisher::filterJumps(const Open
             m_convergingToJump = true;
             interpolationFactor = m_settings->checks.convergenceRatio;
         }
-    }
 
-    if (positionHasJumped)
-    {
-        yCWarning(OPENXRHEADSET) << label() << "position had a jump.";
-        output.pose.position = (1 - interpolationFactor) * m_lastValidData.pose.position + interpolationFactor * output.pose.position;
-    }
+        if (positionHasJumped)
+        {
+            if (!m_positionJumpWarningPrinted)
+            {
+                yCWarning(OPENXRHEADSET) << label() << "position had a jump.";
+                m_positionJumpWarningPrinted = true;
+            }
+            output.pose.position = (1 - interpolationFactor) * m_lastValidData.pose.position + interpolationFactor * output.pose.position;
+        }
+        else if (m_positionJumpWarningPrinted)
+        {
+            yCInfo(OPENXRHEADSET) << label() << "position jump recovered.";
+            m_positionJumpWarningPrinted = false;
+        }
 
-    if (rotationHasJumped)
-    {
-        yCWarning(OPENXRHEADSET) << label() << "rotation had a jump.";
-        output.pose.rotation = m_lastValidData.pose.rotation.slerp(interpolationFactor, output.pose.rotation);
+        if (rotationHasJumped)
+        {
+            if (!m_rotationJumpWarningPrinted)
+            {
+                yCWarning(OPENXRHEADSET) << label() << "rotation had a jump.";
+                m_rotationJumpWarningPrinted = true;
+            }
+            output.pose.rotation = m_lastValidData.pose.rotation.slerp(interpolationFactor, output.pose.rotation);
+        }
+        else if (m_rotationJumpWarningPrinted)
+        {
+            yCInfo(OPENXRHEADSET) << label() << "rotation jump recovered.";
+            m_rotationJumpWarningPrinted = false;
+        }
+
     }
 
     m_lastValidData = output;
-
     if ((yarp::os::Time::now() - m_lastValidDataTime) > (m_settings->checks.lastDataExpirationTime + m_settings->checks.maxConvergenceTime))
     {
         yCWarning(OPENXRHEADSET) << label() << "last valid convergence has expired. The pose will be aligned to the measured one.";
@@ -114,6 +142,8 @@ void FilteredPosePublisher::resetLastValidData()
     m_lastValidData.pose.rotationValid = false;
 
     m_convergingToJump = false;
+    m_positionJumpWarningPrinted = false;
+    m_rotationJumpWarningPrinted = false;
 }
 
 void FilteredPosePublisher::deactivate()

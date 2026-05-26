@@ -39,6 +39,8 @@ class FilteredPosePublisher : public PosePublisher
     std::shared_ptr<FilteredPosePublisherSettings> m_settings{nullptr};
     double m_lastValidDataTime;
     bool m_convergingToJump{false};
+    bool m_positionJumpWarningPrinted{false};
+    bool m_rotationJumpWarningPrinted{false};
 
     bool positionJumped(const OpenXrInterface::NamedPoseVelocity& input);
 
