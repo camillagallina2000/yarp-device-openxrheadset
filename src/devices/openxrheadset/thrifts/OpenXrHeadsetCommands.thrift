@@ -144,6 +144,14 @@ service OpenXrHeadsetCommands
     */
     bool setDrawableArea(1:double area);
 
+    /**
+    * Set passthrough visualization mode.
+    * Accepted modes are draw_only, passthrough_only, and blended.
+    * @param mode The passthrough mode.
+    * @return True if successful.
+    */
+    bool setPassthroughMode(1:string mode);
+
    /**
     * Get the name of the port trough which it is possible to control the left image.
     * @return the name of the port to control the left image.

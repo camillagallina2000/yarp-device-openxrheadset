@@ -195,6 +195,13 @@ OpenXrInterface::Velocity XrSpaceVelocityToVelocity(const XrSpaceVelocity& space
 class OpenXrInterface::Implementation
 {
 public:
+    enum class PassthroughBackend
+    {
+        NONE,
+        HTC,
+        FB,
+    };
+
     //Helper methods
 
     bool checkXrOutput(XrResult result, const char* format, ...)
@@ -371,6 +378,33 @@ public:
     PFN_xrLocateBodyJointsFB pfn_xrLocateBodyJointsFB = nullptr;
     PFN_xrCreateBodyTrackerFB pfn_xrCreateBodyTrackerFB = nullptr;
 	PFN_xrDestroyBodyTrackerFB pfn_xrDestroyBodyTrackerFB = nullptr;
+
+    // Passthrough
+    bool htc_passthrough_supported = false;
+    bool fb_passthrough_supported = false;
+    bool system_fb_passthrough_supported = false;
+    PassthroughBackend passthrough_backend = PassthroughBackend::NONE;
+    OpenXrInterface::PassthroughMode passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+    XrEnvironmentBlendMode passthrough_blend_mode = XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
+
+    // HTC passthrough
+    XrPassthroughHTC htc_passthrough = XR_NULL_HANDLE;
+    XrCompositionLayerPassthroughHTC htc_passthrough_layer;
+    PFN_xrCreatePassthroughHTC pfn_xrCreatePassthroughHTC = nullptr;
+    PFN_xrDestroyPassthroughHTC pfn_xrDestroyPassthroughHTC = nullptr;
+
+    // FB passthrough
+    XrPassthroughFB fb_passthrough = XR_NULL_HANDLE;
+    XrPassthroughLayerFB fb_passthrough_layer_handle = XR_NULL_HANDLE;
+    XrCompositionLayerPassthroughFB fb_passthrough_layer;
+    PFN_xrCreatePassthroughFB pfn_xrCreatePassthroughFB = nullptr;
+    PFN_xrDestroyPassthroughFB pfn_xrDestroyPassthroughFB = nullptr;
+    PFN_xrPassthroughStartFB pfn_xrPassthroughStartFB = nullptr;
+    PFN_xrPassthroughPauseFB pfn_xrPassthroughPauseFB = nullptr;
+    PFN_xrCreatePassthroughLayerFB pfn_xrCreatePassthroughLayerFB = nullptr;
+    PFN_xrDestroyPassthroughLayerFB pfn_xrDestroyPassthroughLayerFB = nullptr;
+    PFN_xrPassthroughLayerPauseFB pfn_xrPassthroughLayerPauseFB = nullptr;
+    PFN_xrPassthroughLayerResumeFB pfn_xrPassthroughLayerResumeFB = nullptr;
 
     // state of the application
     XrSessionState state = XR_SESSION_STATE_UNKNOWN;

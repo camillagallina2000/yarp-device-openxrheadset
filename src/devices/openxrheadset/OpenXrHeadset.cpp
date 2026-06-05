@@ -10,12 +10,41 @@
 
 #include <map>
 #include <algorithm>
+#include <cctype>
 
 #include <OpenXrHeadset.h>
 #include <OpenXrHeadsetLogComponent.h>
 #include <OpenXrYarpUtilities.h>
 
 typedef bool(yarp::os::Value::*valueIsType)(void) const;
+
+namespace {
+
+bool parsePassthroughMode(std::string modeString, OpenXrInterface::PassthroughMode& mode)
+{
+    std::transform(modeString.begin(), modeString.end(), modeString.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (modeString == "draw_only")
+    {
+        mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+        return true;
+    }
+    if (modeString == "passthrough_only")
+    {
+        mode = OpenXrInterface::PassthroughMode::PASSTHROUGH_ONLY;
+        return true;
+    }
+    if (modeString == "blended")
+    {
+        mode = OpenXrInterface::PassthroughMode::BLENDED;
+        return true;
+    }
+
+    return false;
+}
+
+}
 
 yarp::dev::OpenXrHeadset::OpenXrHeadset()
     : yarp::dev::DeviceDriver(),
@@ -1077,6 +1106,21 @@ bool yarp::dev::OpenXrHeadset::setDrawableArea(const double area)
     }
     m_drawableArea = area;
     return true;
+}
+
+bool yarp::dev::OpenXrHeadset::setPassthroughMode(const std::string& mode)
+{
+    std::lock_guard<std::mutex> lock(m_mutex);
+
+    OpenXrInterface::PassthroughMode parsedMode;
+    if (!parsePassthroughMode(mode, parsedMode))
+    {
+        yCError(OPENXRHEADSET) << "Invalid passthrough mode" << mode
+                               << "Allowed values are draw_only, passthrough_only, blended.";
+        return false;
+    }
+
+    return m_openXrInterface.setPassthroughMode(parsedMode);
 }
 
 std::string yarp::dev::OpenXrHeadset::getLeftImageControlPortName()

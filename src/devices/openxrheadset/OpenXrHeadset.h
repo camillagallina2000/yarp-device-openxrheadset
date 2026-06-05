@@ -222,6 +222,13 @@ public:
     virtual bool setDrawableArea(const double area) override;
 
     /**
+    * Set passthrough visualization mode.
+    * Accepted modes are draw_only, passthrough_only, and blended.
+    * @return True if successful.
+    */
+    virtual bool setPassthroughMode(const std::string& mode) override;
+
+    /**
      * Get the name of the port trough which it is possible to control the left image.
      * @return the name of the port to control the left image.
      */

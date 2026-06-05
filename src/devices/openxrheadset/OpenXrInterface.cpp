@@ -11,6 +11,20 @@
 //#define DEBUG_RENDERING
 //#define DEBUG_RENDERING_LOCATION
 
+namespace {
+
+bool modeWantsProjection(OpenXrInterface::PassthroughMode mode)
+{
+    return mode != OpenXrInterface::PassthroughMode::PASSTHROUGH_ONLY;
+}
+
+bool modeWantsPassthrough(OpenXrInterface::PassthroughMode mode)
+{
+    return mode != OpenXrInterface::PassthroughMode::DRAW_ONLY;
+}
+
+}
+
 
 bool OpenXrInterface::checkExtensions()
 {
@@ -45,6 +59,8 @@ bool OpenXrInterface::checkExtensions()
     bool hand_tracking_supported = false;
     bool fb_body_tracking_supported = false;
 	bool meta_full_body_tracking_supported = false;
+    bool htc_passthrough_supported = false;
+    bool fb_passthrough_supported = false;
 
     std::stringstream supported_extensions;
     supported_extensions << "Supported extensions: " <<std::endl;
@@ -86,6 +102,14 @@ bool OpenXrInterface::checkExtensions()
 
         if (strcmp(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME, ext_props[i].extensionName) == 0) {
             meta_full_body_tracking_supported = true;
+        }
+
+        if (strcmp(XR_HTC_PASSTHROUGH_EXTENSION_NAME, ext_props[i].extensionName) == 0) {
+            htc_passthrough_supported = true;
+        }
+
+        if (strcmp(XR_FB_PASSTHROUGH_EXTENSION_NAME, ext_props[i].extensionName) == 0) {
+            fb_passthrough_supported = true;
         }
 
         supported_extensions << std::endl << "    - " << ext_props[i].extensionName;
@@ -139,6 +163,23 @@ bool OpenXrInterface::checkExtensions()
     else if (!meta_full_body_tracking_supported) {
         yCWarning(OPENXRHEADSET) << "Runtime does not support Meta Full Body Tracking! Disabling FB Body Tracking";
 		m_pimpl->use_fb_body_tracking = false;
+    }
+
+    m_pimpl->htc_passthrough_supported = htc_passthrough_supported;
+    m_pimpl->fb_passthrough_supported = fb_passthrough_supported;
+
+    if (m_pimpl->htc_passthrough_supported)
+    {
+        m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::HTC;
+    }
+    else if (m_pimpl->fb_passthrough_supported)
+    {
+        m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::FB;
+    }
+    else
+    {
+        m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+        yCWarning(OPENXRHEADSET) << "Runtime does not support passthrough extensions.";
     }
 
     return true;
@@ -200,6 +241,14 @@ bool OpenXrInterface::prepareXrInstance()
     {
         requestedExtensions.push_back(XR_FB_BODY_TRACKING_EXTENSION_NAME);
 		requestedExtensions.push_back(XR_META_BODY_TRACKING_FULL_BODY_EXTENSION_NAME);
+    }
+    if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::HTC)
+    {
+        requestedExtensions.push_back(XR_HTC_PASSTHROUGH_EXTENSION_NAME);
+    }
+    else if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::FB)
+    {
+        requestedExtensions.push_back(XR_FB_PASSTHROUGH_EXTENSION_NAME);
     }
     // Populate the info to create the instance
     XrInstanceCreateInfo instanceCreateInfo
@@ -486,6 +535,15 @@ void OpenXrInterface::checkSystemProperties()
         next_chain = &body_tracking_props.next;
     }
 
+    XrSystemPassthroughPropertiesFB fb_passthrough_props;
+    fb_passthrough_props.type = XR_TYPE_SYSTEM_PASSTHROUGH_PROPERTIES_FB;
+    fb_passthrough_props.next = NULL;
+    fb_passthrough_props.supportsPassthrough = XR_FALSE;
+    if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::FB)
+    {
+        *next_chain = &fb_passthrough_props;
+    }
+
     XrResult result = xrGetSystemProperties(m_pimpl->instance, m_pimpl->system_id, &system_props);
     if (!XR_SUCCEEDED(result))
     {
@@ -537,6 +595,66 @@ void OpenXrInterface::checkSystemProperties()
 			m_pimpl->use_fb_body_tracking = false;
         }
 	}
+
+    if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::FB)
+    {
+        m_pimpl->system_fb_passthrough_supported = fb_passthrough_props.supportsPassthrough;
+        if (!m_pimpl->system_fb_passthrough_supported)
+        {
+            yCWarning(OPENXRHEADSET) << "XR_FB_passthrough extension is present, but the current system does not support passthrough.";
+            m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+            m_pimpl->passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+        }
+    }
+
+    uint32_t blend_mode_count = 0;
+    result = xrEnumerateEnvironmentBlendModes(m_pimpl->instance,
+                                              m_pimpl->system_id,
+                                              XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                              0,
+                                              &blend_mode_count,
+                                              nullptr);
+    if (!m_pimpl->checkXrOutput(result, "Failed to enumerate environment blend mode count."))
+    {
+        m_pimpl->passthrough_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        return;
+    }
+
+    std::vector<XrEnvironmentBlendMode> blend_modes(blend_mode_count);
+    result = xrEnumerateEnvironmentBlendModes(m_pimpl->instance,
+                                              m_pimpl->system_id,
+                                              XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO,
+                                              blend_mode_count,
+                                              &blend_mode_count,
+                                              blend_modes.data());
+    if (!m_pimpl->checkXrOutput(result, "Failed to enumerate environment blend modes."))
+    {
+        m_pimpl->passthrough_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+        return;
+    }
+
+    bool alpha_supported = false;
+    bool additive_supported = false;
+    bool opaque_supported = false;
+    for (const auto& mode : blend_modes)
+    {
+        alpha_supported = alpha_supported || mode == XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
+        additive_supported = additive_supported || mode == XR_ENVIRONMENT_BLEND_MODE_ADDITIVE;
+        opaque_supported = opaque_supported || mode == XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+    }
+
+    if (alpha_supported)
+    {
+        m_pimpl->passthrough_blend_mode = XR_ENVIRONMENT_BLEND_MODE_ALPHA_BLEND;
+    }
+    else if (additive_supported)
+    {
+        m_pimpl->passthrough_blend_mode = XR_ENVIRONMENT_BLEND_MODE_ADDITIVE;
+    }
+    else if (opaque_supported)
+    {
+        m_pimpl->passthrough_blend_mode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+    }
 
 }
 
@@ -663,6 +781,108 @@ bool OpenXrInterface::prepareXrSession()
     result = xrCreateReferenceSpace(m_pimpl->session, &space_create_info, &(m_pimpl->view_space));
     if (! m_pimpl->checkXrOutput(result, "Failed to create view space!"))
         return false;
+
+    if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::HTC)
+    {
+        XrPassthroughCreateInfoHTC passthroughCreateInfo = {
+            .type = XR_TYPE_PASSTHROUGH_CREATE_INFO_HTC,
+            .next = NULL,
+            .form = XR_PASSTHROUGH_FORM_PLANAR_HTC,
+        };
+
+        result = m_pimpl->pfn_xrCreatePassthroughHTC(m_pimpl->session, &passthroughCreateInfo, &m_pimpl->htc_passthrough);
+        if (!m_pimpl->checkXrOutput(result, "Failed to create HTC passthrough. Disabling passthrough."))
+        {
+            m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+            m_pimpl->passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+        }
+        else
+        {
+            m_pimpl->htc_passthrough_layer = {
+                .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_HTC,
+                .next = NULL,
+                .layerFlags = 0,
+                .space = m_pimpl->renderInPlaySpace ? m_pimpl->play_space : m_pimpl->view_space,
+                .passthrough = m_pimpl->htc_passthrough,
+                .color = {
+                    .type = XR_TYPE_PASSTHROUGH_COLOR_HTC,
+                    .next = NULL,
+                    .alpha = 1.0f,
+                },
+            };
+        }
+    }
+    else if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::FB)
+    {
+        XrPassthroughCreateInfoFB passthroughCreateInfo = {
+            .type = XR_TYPE_PASSTHROUGH_CREATE_INFO_FB,
+            .next = NULL,
+            .flags = 0,
+        };
+
+        result = m_pimpl->pfn_xrCreatePassthroughFB(m_pimpl->session, &passthroughCreateInfo, &m_pimpl->fb_passthrough);
+        if (!m_pimpl->checkXrOutput(result, "Failed to create FB passthrough. Disabling passthrough."))
+        {
+            m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+            m_pimpl->passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+        }
+        else
+        {
+            XrPassthroughLayerCreateInfoFB passthroughLayerCreateInfo = {
+                .type = XR_TYPE_PASSTHROUGH_LAYER_CREATE_INFO_FB,
+                .next = NULL,
+                .passthrough = m_pimpl->fb_passthrough,
+                .flags = 0,
+                .purpose = XR_PASSTHROUGH_LAYER_PURPOSE_RECONSTRUCTION_FB,
+            };
+
+            result = m_pimpl->pfn_xrCreatePassthroughLayerFB(m_pimpl->session, &passthroughLayerCreateInfo, &m_pimpl->fb_passthrough_layer_handle);
+            if (!m_pimpl->checkXrOutput(result, "Failed to create FB passthrough layer. Disabling passthrough."))
+            {
+                m_pimpl->pfn_xrDestroyPassthroughFB(m_pimpl->fb_passthrough);
+                m_pimpl->fb_passthrough = XR_NULL_HANDLE;
+                m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+                m_pimpl->passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+            }
+            else
+            {
+                result = m_pimpl->pfn_xrPassthroughStartFB(m_pimpl->fb_passthrough);
+                if (!m_pimpl->checkXrOutput(result, "Failed to start FB passthrough. Disabling passthrough."))
+                {
+                    m_pimpl->pfn_xrDestroyPassthroughLayerFB(m_pimpl->fb_passthrough_layer_handle);
+                    m_pimpl->fb_passthrough_layer_handle = XR_NULL_HANDLE;
+                    m_pimpl->pfn_xrDestroyPassthroughFB(m_pimpl->fb_passthrough);
+                    m_pimpl->fb_passthrough = XR_NULL_HANDLE;
+                    m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+                    m_pimpl->passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+                }
+                else
+                {
+                    result = m_pimpl->pfn_xrPassthroughLayerResumeFB(m_pimpl->fb_passthrough_layer_handle);
+                    if (!m_pimpl->checkXrOutput(result, "Failed to resume FB passthrough layer. Disabling passthrough."))
+                    {
+                        m_pimpl->pfn_xrPassthroughPauseFB(m_pimpl->fb_passthrough);
+                        m_pimpl->pfn_xrDestroyPassthroughLayerFB(m_pimpl->fb_passthrough_layer_handle);
+                        m_pimpl->fb_passthrough_layer_handle = XR_NULL_HANDLE;
+                        m_pimpl->pfn_xrDestroyPassthroughFB(m_pimpl->fb_passthrough);
+                        m_pimpl->fb_passthrough = XR_NULL_HANDLE;
+                        m_pimpl->passthrough_backend = OpenXrInterface::Implementation::PassthroughBackend::NONE;
+                        m_pimpl->passthrough_mode = OpenXrInterface::PassthroughMode::DRAW_ONLY;
+                    }
+                    else
+                    {
+                        m_pimpl->fb_passthrough_layer = {
+                            .type = XR_TYPE_COMPOSITION_LAYER_PASSTHROUGH_FB,
+                            .next = NULL,
+                            .flags = 0,
+                            .space = m_pimpl->renderInPlaySpace ? m_pimpl->play_space : m_pimpl->view_space,
+                            .layerHandle = m_pimpl->fb_passthrough_layer_handle,
+                        };
+                    }
+                }
+            }
+        }
+    }
 
     if (m_pimpl->htc_eye_facial_tracking_supported)
     {
@@ -1176,6 +1396,81 @@ bool OpenXrInterface::prepareFbBodyTracking()
         joint.parentFrame = "";
         std::string joint_name = m_pimpl->getFBBodyJointName(static_cast<XrFullBodyJointMETA>(i));
 		joint.name = "fb_body_" + joint_name;
+    }
+
+    if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::HTC)
+    {
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrCreatePassthroughHTC",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrCreatePassthroughHTC);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrCreatePassthroughHTC function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrDestroyPassthroughHTC",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrDestroyPassthroughHTC);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrDestroyPassthroughHTC function pointer"))
+            return false;
+
+        if (m_pimpl->pfn_xrCreatePassthroughHTC == nullptr ||
+            m_pimpl->pfn_xrDestroyPassthroughHTC == nullptr)
+        {
+            yCError(OPENXRHEADSET) << "Failed to load HTC passthrough function pointers!";
+            return false;
+        }
+    }
+    else if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::FB)
+    {
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrCreatePassthroughFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrCreatePassthroughFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrCreatePassthroughFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrDestroyPassthroughFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrDestroyPassthroughFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrDestroyPassthroughFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrPassthroughStartFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrPassthroughStartFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrPassthroughStartFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrPassthroughPauseFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrPassthroughPauseFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrPassthroughPauseFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrCreatePassthroughLayerFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrCreatePassthroughLayerFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrCreatePassthroughLayerFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrDestroyPassthroughLayerFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrDestroyPassthroughLayerFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrDestroyPassthroughLayerFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrPassthroughLayerPauseFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrPassthroughLayerPauseFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrPassthroughLayerPauseFB function pointer"))
+            return false;
+
+        result = xrGetInstanceProcAddr(m_pimpl->instance, "xrPassthroughLayerResumeFB",
+            (PFN_xrVoidFunction*)&m_pimpl->pfn_xrPassthroughLayerResumeFB);
+        if (!m_pimpl->checkXrOutput(result, "Failed to load xrPassthroughLayerResumeFB function pointer"))
+            return false;
+
+        if (m_pimpl->pfn_xrCreatePassthroughFB == nullptr ||
+            m_pimpl->pfn_xrDestroyPassthroughFB == nullptr ||
+            m_pimpl->pfn_xrPassthroughStartFB == nullptr ||
+            m_pimpl->pfn_xrPassthroughPauseFB == nullptr ||
+            m_pimpl->pfn_xrCreatePassthroughLayerFB == nullptr ||
+            m_pimpl->pfn_xrDestroyPassthroughLayerFB == nullptr ||
+            m_pimpl->pfn_xrPassthroughLayerPauseFB == nullptr ||
+            m_pimpl->pfn_xrPassthroughLayerResumeFB == nullptr)
+        {
+            yCError(OPENXRHEADSET) << "Failed to load FB passthrough function pointers!";
+            return false;
+        }
     }
 
     return true;
@@ -1938,6 +2233,25 @@ void OpenXrInterface::endXrFrame()
 
     if (m_pimpl->frame_state.shouldRender) {
 
+        if (modeWantsPassthrough(m_pimpl->passthrough_mode))
+        {
+            if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::HTC &&
+                m_pimpl->htc_passthrough != XR_NULL_HANDLE)
+            {
+                m_pimpl->htc_passthrough_layer.space = m_pimpl->renderInPlaySpace ? m_pimpl->play_space : m_pimpl->view_space;
+                m_pimpl->submitLayer((XrCompositionLayerBaseHeader*)&m_pimpl->htc_passthrough_layer);
+            }
+            else if (m_pimpl->passthrough_backend == OpenXrInterface::Implementation::PassthroughBackend::FB &&
+                     m_pimpl->fb_passthrough_layer_handle != XR_NULL_HANDLE)
+            {
+                m_pimpl->fb_passthrough_layer.space = m_pimpl->renderInPlaySpace ? m_pimpl->play_space : m_pimpl->view_space;
+                m_pimpl->submitLayer((XrCompositionLayerBaseHeader*)&m_pimpl->fb_passthrough_layer);
+            }
+        }
+
+        if (modeWantsProjection(m_pimpl->passthrough_mode))
+        {
+
         // Here we can check m_pimpl->view_state.viewStateFlags to see if the orientation has been updated
         // in case this is used for the rendering
         m_pimpl->submitLayer((XrCompositionLayerBaseHeader*) & (m_pimpl->projection_layer)); //Submit the projection layer
@@ -1955,12 +2269,19 @@ void OpenXrInterface::endXrFrame()
                 m_pimpl->submitLayer((XrCompositionLayerBaseHeader*) &layer->layer);
             }
         }
+        }
+    }
+
+    XrEnvironmentBlendMode blendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+    if (modeWantsPassthrough(m_pimpl->passthrough_mode))
+    {
+        blendMode = m_pimpl->passthrough_blend_mode;
     }
 
     XrFrameEndInfo frameEndInfo = {.type = XR_TYPE_FRAME_END_INFO,
                                    .next = NULL,
                                    .displayTime = m_pimpl->frame_state.predictedDisplayTime,
-                                   .environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE,
+                                   .environmentBlendMode = blendMode,
                                    .layerCount = static_cast<uint32_t>(m_pimpl->layer_count),
                                    .layers = m_pimpl->submitted_layers.data(),
                                    };
@@ -2061,11 +2382,33 @@ void OpenXrInterface::draw(double drawableArea)
 		if (m_pimpl->use_fb_body_tracking) {
 			updateFbBodyTracking();
 		}
-        if (m_pimpl->frame_state.shouldRender) {
+        if (m_pimpl->frame_state.shouldRender && modeWantsProjection(m_pimpl->passthrough_mode)) {
             render(drawableArea);
         }
         endXrFrame();
     }
+}
+
+bool OpenXrInterface::setPassthroughMode(OpenXrInterface::PassthroughMode mode)
+{
+    if (modeWantsPassthrough(mode) && !passthroughSupported())
+    {
+        yCError(OPENXRHEADSET) << "Passthrough is not supported by the current runtime/system.";
+        return false;
+    }
+
+    m_pimpl->passthrough_mode = mode;
+    return true;
+}
+
+OpenXrInterface::PassthroughMode OpenXrInterface::passthroughMode() const
+{
+    return m_pimpl->passthrough_mode;
+}
+
+bool OpenXrInterface::passthroughSupported() const
+{
+    return m_pimpl->passthrough_backend != OpenXrInterface::Implementation::PassthroughBackend::NONE;
 }
 
 std::shared_ptr<IOpenXrQuadLayer> OpenXrInterface::addHeadFixedQuadLayer()
@@ -2488,6 +2831,41 @@ void OpenXrInterface::close()
         m_pimpl->pfn_xrDestroyBodyTrackerFB(m_pimpl->fb_body_tracker);
         m_pimpl->use_fb_body_tracking = false;
 	}
+
+    if (m_pimpl->fb_passthrough_layer_handle != XR_NULL_HANDLE)
+    {
+        if (m_pimpl->pfn_xrPassthroughLayerPauseFB)
+        {
+            m_pimpl->pfn_xrPassthroughLayerPauseFB(m_pimpl->fb_passthrough_layer_handle);
+        }
+        if (m_pimpl->pfn_xrDestroyPassthroughLayerFB)
+        {
+            m_pimpl->pfn_xrDestroyPassthroughLayerFB(m_pimpl->fb_passthrough_layer_handle);
+        }
+        m_pimpl->fb_passthrough_layer_handle = XR_NULL_HANDLE;
+    }
+
+    if (m_pimpl->fb_passthrough != XR_NULL_HANDLE)
+    {
+        if (m_pimpl->pfn_xrPassthroughPauseFB)
+        {
+            m_pimpl->pfn_xrPassthroughPauseFB(m_pimpl->fb_passthrough);
+        }
+        if (m_pimpl->pfn_xrDestroyPassthroughFB)
+        {
+            m_pimpl->pfn_xrDestroyPassthroughFB(m_pimpl->fb_passthrough);
+        }
+        m_pimpl->fb_passthrough = XR_NULL_HANDLE;
+    }
+
+    if (m_pimpl->htc_passthrough != XR_NULL_HANDLE)
+    {
+        if (m_pimpl->pfn_xrDestroyPassthroughHTC)
+        {
+            m_pimpl->pfn_xrDestroyPassthroughHTC(m_pimpl->htc_passthrough);
+        }
+        m_pimpl->htc_passthrough = XR_NULL_HANDLE;
+    }
 
     if (m_pimpl->glFrameBufferId != 0) {
         glDeleteFramebuffers(1, &(m_pimpl->glFrameBufferId));

@@ -140,6 +140,13 @@ class OpenXrInterface
 
 public:
 
+    enum class PassthroughMode
+    {
+        DRAW_ONLY,
+        PASSTHROUGH_ONLY,
+        BLENDED,
+    };
+
     struct Pose
     {
         bool positionValid{false};
@@ -188,6 +195,12 @@ public:
     bool isInitialized() const;
 
     void draw(double drawableArea = 1.0);
+
+    bool setPassthroughMode(PassthroughMode mode);
+
+    PassthroughMode passthroughMode() const;
+
+    bool passthroughSupported() const;
 
     std::shared_ptr<IOpenXrQuadLayer> addHeadFixedQuadLayer();
 
