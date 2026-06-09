@@ -261,6 +261,7 @@ public:
 
 	std::string getFBBodyJointName(XrFullBodyJointMETA jointIndex);
 
+    std::string getBDBodyJointName(XrBodyJointBD jointIndex);
     // DATA
 
     // the instance handle can be thought of as the basic connection to the OpenXR runtime
@@ -378,6 +379,15 @@ public:
     PFN_xrLocateBodyJointsFB pfn_xrLocateBodyJointsFB = nullptr;
     PFN_xrCreateBodyTrackerFB pfn_xrCreateBodyTrackerFB = nullptr;
 	PFN_xrDestroyBodyTrackerFB pfn_xrDestroyBodyTrackerFB = nullptr;
+
+    // BD (PICO) Body tracking
+    bool use_bd_body_tracking = true;
+    std::vector<XrBodyJointLocationBD> bd_body_joint_locations;
+    XrBodyTrackerBD bd_body_tracker = XR_NULL_HANDLE;
+    PFN_xrLocateBodyJointsBD pfn_xrLocateBodyJointsBD = nullptr;
+    PFN_xrCreateBodyTrackerBD pfn_xrCreateBodyTrackerBD = nullptr;
+    PFN_xrDestroyBodyTrackerBD pfn_xrDestroyBodyTrackerBD = nullptr;
+    std::vector<NamedPoseVelocity> bdBodyJointPoses;
 
     // Passthrough
     bool htc_passthrough_supported = false;
